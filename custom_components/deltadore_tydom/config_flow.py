@@ -87,6 +87,34 @@ def zones_valid(zones) -> bool:
     return re.fullmatch(zones_regex, zones) is not None
 
 
+def sanitize_config_data(data: dict[str, Any]) -> dict[str, Any]:
+    """Masquer les informations sensibles dans les données de configuration."""
+    sanitized = data.copy()
+    # Masquer le mot de passe
+    if CONF_PASSWORD in sanitized and sanitized[CONF_PASSWORD]:
+        sanitized[CONF_PASSWORD] = "***"
+    # Masquer l'email (partiellement)
+    if CONF_EMAIL in sanitized and sanitized[CONF_EMAIL]:
+        email = sanitized[CONF_EMAIL]
+        if "@" in email:
+            parts = email.split("@")
+            if len(parts) == 2:
+                # Masquer la partie locale de l'email
+                local = parts[0]
+                if len(local) > 2:
+                    sanitized[CONF_EMAIL] = f"{local[:2]}***@{parts[1]}"
+                else:
+                    sanitized[CONF_EMAIL] = f"***@{parts[1]}"
+            else:
+                sanitized[CONF_EMAIL] = "***"
+        else:
+            sanitized[CONF_EMAIL] = "***"
+    # Masquer le mot de passe Tydom s'il est présent
+    if CONF_TYDOM_PASSWORD in sanitized and sanitized[CONF_TYDOM_PASSWORD]:
+        sanitized[CONF_TYDOM_PASSWORD] = "***"
+    return sanitized
+
+
 async def validate_input(
     hass: HomeAssistant, cloud: bool, data: dict
 ) -> dict[str, Any]:
@@ -96,7 +124,8 @@ async def validate_input(
     """
     # Validate the data can be used to set up a connection.
 
-    LOGGER.debug("validating input: %s", data)
+    sanitized_data = sanitize_config_data(data)
+    LOGGER.debug("validating input: %s", sanitized_data)
     if not host_valid(data[CONF_HOST]):
         raise InvalidHost
 
@@ -268,7 +297,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 LOGGER.error("Invalid MAC: %s", user_input[CONF_MAC])
             except InvalidEmail:
                 _errors[CONF_EMAIL] = "invalid_email"
-                LOGGER.error("Invalid email: %s", user_input[CONF_EMAIL])
+                sanitized_email = sanitize_config_data(
+                    {CONF_EMAIL: user_input.get(CONF_EMAIL, "")}
+                )[CONF_EMAIL]
+                LOGGER.error("Invalid email: %s", sanitized_email)
             except InvalidPassword:
                 _errors[CONF_PASSWORD] = "invalid_password"
                 LOGGER.error("Invalid password")

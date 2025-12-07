@@ -60,6 +60,31 @@ KNOWN_ENDPOINTS = [
 HTTP_METHODS = ["GET", "PUT", "POST", "DELETE", "PATCH"]
 
 
+def sanitize_error_message(message: str, password: str | None = None) -> str:
+    """Masquer les informations sensibles dans les messages d'erreur."""
+    sanitized = str(message)
+
+    # Masquer le mot de passe s'il est présent
+    if password:
+        sanitized = sanitized.replace(password, "***")
+        # Masquer aussi les variantes (avec quotes, etc.)
+        sanitized = sanitized.replace(f'"{password}"', '"***"')
+        sanitized = sanitized.replace(f"'{password}'", "'***'")
+
+    # Masquer les patterns communs de mots de passe dans les erreurs
+    import re
+
+    # Masquer les patterns comme "password=xxx" ou "pwd=xxx"
+    sanitized = re.sub(
+        r'(password|pwd|passwd)\s*[=:]\s*[^\s"\'<>]+',
+        r"\1=***",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+
+    return sanitized
+
+
 class EndpointDiscovery:
     """Classe pour découvrir les endpoints disponibles."""
 
@@ -125,7 +150,6 @@ class EndpointDiscovery:
     async def connect_websocket(self) -> bool:
         """Se connecter au WebSocket Tydom."""
         try:
-
             # Configuration SSL
             sslcontext = await asyncio.to_thread(ssl.create_default_context)
             sslcontext.options |= 0x4  # OP_LEGACY_SERVER_CONNECT
@@ -214,10 +238,9 @@ class EndpointDiscovery:
                     await self.session.close()
                 raise
         except Exception as e:
-            print(f"✗ Erreur de connexion WebSocket: {e}")
-            import traceback
-
-            traceback.print_exc()
+            error_msg = sanitize_error_message(str(e), self.password)
+            print(f"✗ Erreur de connexion WebSocket: {error_msg}")
+            # Ne pas afficher la trace complète pour éviter d'exposer des informations sensibles
             return False
 
     async def send_message(self, method: str, endpoint: str) -> dict[str, Any]:
@@ -287,7 +310,8 @@ class EndpointDiscovery:
                     "error": "Aucune réponse reçue dans les 5 secondes",
                 }
         except Exception as e:
-            return {"status": "error", "error": str(e)}
+            error_msg = sanitize_error_message(str(e), self.password)
+            return {"status": "error", "error": error_msg}
 
     async def test_endpoint(self, endpoint: str, method: str = "GET") -> dict[str, Any]:
         """Tester un endpoint avec une méthode HTTP."""
@@ -318,9 +342,9 @@ class EndpointDiscovery:
                 try:
                     # Parser la réponse pour extraire les device_ids
                     # Note: Le format exact dépend de la réponse de l'API
-                    response = result.get("response", "")
                     # Ici, on devrait parser la réponse JSON si possible
                     # Pour l'instant, on laisse vide et on utilisera des IDs par défaut
+                    _ = result.get("response", "")  # noqa: F841
                     pass
                 except Exception:
                     pass

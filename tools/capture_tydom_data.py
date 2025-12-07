@@ -24,7 +24,7 @@ from io import BytesIO
 
 try:
     import aiohttp
-    from aiohttp import ClientWebSocketResponse, WSMsgType
+    from aiohttp import WSMsgType
     from requests.auth import HTTPDigestAuth
     import async_timeout
 except ImportError:
@@ -34,6 +34,48 @@ except ImportError:
 
 # Constantes
 DELTADORE_AUTH_URL = "https://deltadoreadb2ciot.b2clogin.com/deltadoreadb2ciot.onmicrosoft.com/v2.0/.well-known/openid-configuration?p=B2C_1_AccountProviderROPC_SignIn"
+
+
+def sanitize_error_message(
+    message: str, password: str | None = None, email: str | None = None
+) -> str:
+    """Masquer les informations sensibles dans les messages d'erreur."""
+    sanitized = str(message)
+
+    # Masquer le mot de passe s'il est présent
+    if password:
+        sanitized = sanitized.replace(password, "***")
+        # Masquer aussi les variantes (avec quotes, etc.)
+        sanitized = sanitized.replace(f'"{password}"', '"***"')
+        sanitized = sanitized.replace(f"'{password}'", "'***'")
+
+    # Masquer l'email s'il est présent
+    if email:
+        sanitized = sanitized.replace(email, "***@***")
+        sanitized = sanitized.replace(f'"{email}"', '"***@***"')
+        sanitized = sanitized.replace(f"'{email}'", "'***@***'")
+
+    # Masquer les patterns communs de mots de passe dans les erreurs
+    import re
+
+    # Masquer les patterns comme "password=xxx" ou "pwd=xxx"
+    sanitized = re.sub(
+        r'(password|pwd|passwd)\s*[=:]\s*[^\s"\'<>]+',
+        r"\1=***",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+    # Masquer les patterns comme "email=xxx" ou "mail=xxx"
+    sanitized = re.sub(
+        r'(email|mail|username|user)\s*[=:]\s*[^\s"\'<>@]+@[^\s"\'<>]+',
+        r"\1=***@***",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+
+    return sanitized
+
+
 DELTADORE_AUTH_GRANT_TYPE = "password"
 DELTADORE_AUTH_CLIENTID = "8782839f-3264-472a-ab87-4d4e23524da4"
 DELTADORE_AUTH_SCOPE = "openid profile offline_access https://deltadoreadb2ciot.onmicrosoft.com/iotapi/video_config https://deltadoreadb2ciot.onmicrosoft.com/iotapi/video_allowed https://deltadoreadb2ciot.onmicrosoft.com/iotapi/sites_management_allowed https://deltadoreadb2ciot.onmicrosoft.com/iotapi/sites_management_gateway_credentials https://deltadoreadb2ciot.onmicrosoft.com/iotapi/sites_management_camera_credentials https://deltadoreadb2ciot.onmicrosoft.com/iotapi/comptage_europe_collect_reader https://deltadoreadb2ciot.onmicrosoft.com/iotapi/comptage_europe_site_config_contributor https://deltadoreadb2ciot.onmicrosoft.com/iotapi/pilotage_allowed https://deltadoreadb2ciot.onmicrosoft.com/iotapi/consent_mgt_contributor https://deltadoreadb2ciot.onmicrosoft.com/iotapi/b2caccountprovider_manage_account https://deltadoreadb2ciot.onmicrosoft.com/iotapi/b2caccountprovider_allow_view_account https://deltadoreadb2ciot.onmicrosoft.com/iotapi/tydom_backend_allowed https://deltadoreadb2ciot.onmicrosoft.com/iotapi/websocket_remote_access https://deltadoreadb2ciot.onmicrosoft.com/iotapi/orkestrator_device https://deltadoreadb2ciot.onmicrosoft.com/iotapi/orkestrator_view https://deltadoreadb2ciot.onmicrosoft.com/iotapi/orkestrator_space https://deltadoreadb2ciot.onmicrosoft.com/iotapi/orkestrator_connector https://deltadoreadb2ciot.onmicrosoft.com/iotapi/orkestrator_endpoint https://deltadoreadb2ciot.onmicrosoft.com/iotapi/rule_management_allowed https://deltadoreadb2ciot.onmicrosoft.com/iotapi/collect_read_datas"
@@ -122,10 +164,13 @@ def build_digest_header(
     digest_auth._thread_local.chal = chal
     digest_auth._thread_local.last_nonce = nonce
     digest_auth._thread_local.nonce_count = 1
-    return digest_auth.build_digest_header(
+    result = digest_auth.build_digest_header(
         "GET",
         f"https://{host}:443/mediation/client?mac={mac}&appli=1",
     )
+    # build_digest_header retourne toujours une string, mais le type checker ne le sait pas
+    assert result is not None, "build_digest_header ne devrait jamais retourner None"
+    return result
 
 
 async def capture(
@@ -148,6 +193,10 @@ async def capture(
             print("🔐 Récupération du mot de passe Tydom...")
             password = await get_tydom_password(session, email, delta_password, mac)
             print("✅ Mot de passe récupéré")
+
+        # À ce point, password ne peut pas être None
+        if password is None:
+            raise ValueError("Mot de passe Tydom non disponible")
 
         # Créer le répertoire de sortie
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -201,6 +250,9 @@ async def capture(
             nonce = re_matcher.group(1)
 
         # Étape 2: Connexion WebSocket avec auth
+        # À ce point, password ne peut pas être None
+        if password is None:
+            raise ValueError("Mot de passe requis pour la connexion")
         http_headers = {
             "Authorization": build_digest_header(mac, password, nonce, host, cloud_mode)
         }
@@ -258,7 +310,8 @@ async def capture(
                     print("🔌 Connexion fermée")
                     break
                 elif msg.type == WSMsgType.ERROR:
-                    print(f"❌ Erreur: {msg.data}")
+                    error_msg = sanitize_error_message(str(msg.data), password, email)
+                    print(f"❌ Erreur: {error_msg}")
                     break
                 elif msg.type in (WSMsgType.PING, WSMsgType.PONG):
                     continue
@@ -308,8 +361,11 @@ async def capture(
                                         f"⚠️  #{message_count}: {uri or 'unknown'} - Erreur JSON: {e}"
                                     )
                                 except Exception as e:
+                                    error_msg = sanitize_error_message(
+                                        str(e), password, email
+                                    )
                                     print(
-                                        f"⚠️  #{message_count}: {uri or 'unknown'} - Erreur: {e}"
+                                        f"⚠️  #{message_count}: {uri or 'unknown'} - Erreur: {error_msg}"
                                     )
                             elif body:
                                 # Body non-JSON, sauvegarder quand même
@@ -347,11 +403,12 @@ async def capture(
                                         }
                                     )
                                     print(f"📥 #{message_count}: {uri or 'unknown'}")
-                                except:
+                                except Exception:
                                     pass
                     except Exception as e:
+                        error_msg = sanitize_error_message(str(e), password, email)
                         print(
-                            f"⚠️  Erreur lors du parsing du message #{message_count}: {e}"
+                            f"⚠️  Erreur lors du parsing du message #{message_count}: {error_msg}"
                         )
 
         except KeyboardInterrupt:

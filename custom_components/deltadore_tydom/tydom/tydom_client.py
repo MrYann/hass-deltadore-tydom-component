@@ -42,6 +42,49 @@ if TYPE_CHECKING:
     from .tydom_devices import TydomDevice
 
 
+def sanitize_log_message(message: str, password: str | None = None) -> str:
+    """Masquer les informations sensibles dans les messages de log."""
+    import re
+
+    sanitized = str(message)
+
+    # Masquer le mot de passe s'il est présent
+    if password:
+        sanitized = sanitized.replace(password, "***")
+        sanitized = sanitized.replace(f'"{password}"', '"***"')
+        sanitized = sanitized.replace(f"'{password}'", "'***'")
+
+    # Masquer les patterns de mots de passe dans les JSON/strings
+    sanitized = re.sub(
+        r'"password"\s*:\s*"[^"]*"', '"password":"***"', sanitized, flags=re.IGNORECASE
+    )
+    sanitized = re.sub(
+        r'"pwd"\s*:\s*"[^"]*"', '"pwd":"***"', sanitized, flags=re.IGNORECASE
+    )
+    sanitized = re.sub(
+        r'"access_token"\s*:\s*"[^"]*"',
+        '"access_token":"***"',
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+    sanitized = re.sub(
+        r'"token"\s*:\s*"[^"]*"', '"token":"***"', sanitized, flags=re.IGNORECASE
+    )
+
+    # Masquer les patterns dans les URLs ou headers
+    sanitized = re.sub(
+        r'(password|pwd|passwd|token|access_token)\s*[=:]\s*[^\s"\'<>]+',
+        r"\1=***",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+    sanitized = re.sub(
+        r"Bearer\s+[A-Za-z0-9\-._~+/]+", "Bearer ***", sanitized, flags=re.IGNORECASE
+    )
+
+    return sanitized
+
+
 class TydomClientApiClientError(Exception):
     """Exception to indicate a general API error."""
 
@@ -175,11 +218,13 @@ class TydomClient:
                     proxy=proxy,
                 )
 
+                response_text = await response.text()
+                sanitized_content = sanitize_log_message(response_text, password)
                 LOGGER.debug(
                     "response status for signin : %s\nheaders : %s\ncontent : %s",
                     response.status,
                     response.headers,
-                    await response.text(),
+                    sanitized_content,
                 )
 
                 json_response = await response.json()
@@ -193,11 +238,14 @@ class TydomClient:
                     proxy=proxy,
                 )
 
+                response_text = await response.text()
+                # Le contenu peut contenir le mot de passe Tydom, le masquer
+                sanitized_content = sanitize_log_message(response_text)
                 LOGGER.debug(
                     "response status for https://prod.iotdeltadore.com/sitesmanagement/api/v1/sites?gateway_mac= : %s\nheaders : %s\ncontent : %s",
                     response.status,
                     response.headers,
-                    await response.text(),
+                    sanitized_content,
                 )
 
                 json_response = await response.json()
@@ -437,7 +485,10 @@ class TydomClient:
                 )
                 incoming_bytes_str = incoming.encode("utf-8")
                 file_index += 1
-                LOGGER.info("Incomming message - message : %s", incoming_bytes_str)
+                sanitized_msg = sanitize_log_message(
+                    incoming_bytes_str.decode("utf-8", errors="replace"), self._password
+                )
+                LOGGER.info("Incomming message - message : %s", sanitized_msg)
             else:
                 await asyncio.sleep(10)
                 return None
@@ -454,8 +505,15 @@ class TydomClient:
             if self._connection is None:
                 return None
             msg = await self._connection.receive()
+            # Masquer les informations sensibles dans les messages entrants
+            msg_data_str = (
+                msg.data.decode("utf-8", errors="replace")
+                if isinstance(msg.data, bytes)
+                else str(msg.data)
+            )
+            sanitized_msg = sanitize_log_message(msg_data_str, self._password)
             LOGGER.info(
-                "Incoming message - type : %s - message : %s", msg.type, msg.data
+                "Incoming message - type : %s - message : %s", msg.type, sanitized_msg
             )
 
             if (
@@ -477,6 +535,7 @@ class TydomClient:
             return await self._message_handler.route_response(incoming_bytes_str)
 
         except Exception:
+            # Ne pas logger le message complet pour éviter d'exposer des informations sensibles
             LOGGER.exception("Unable to handle message")
             return None
 
@@ -1279,7 +1338,14 @@ class TydomClient:
                     return 0
             except BaseException:
                 LOGGER.error("put_alarm_cdata ERROR !", exc_info=True)
-                LOGGER.error(a_bytes)
+                # Masquer les informations sensibles dans les bytes loggés
+                a_bytes_str = (
+                    a_bytes.decode("utf-8", errors="replace")
+                    if isinstance(a_bytes, bytes)
+                    else str(a_bytes)
+                )
+                sanitized_bytes = sanitize_log_message(a_bytes_str, self._password)
+                LOGGER.error("Request bytes: %s", sanitized_bytes)
         except BaseException:
             LOGGER.error("put_alarm_cdata ERROR !", exc_info=True)
 

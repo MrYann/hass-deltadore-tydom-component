@@ -308,7 +308,7 @@ class TydomClient:
                     headers=http_headers,
                     autoping=True,
                     heartbeat=2.0,
-                    timeout=aiohttp.ClientTimeout(total=TIMEOUT_WEBSOCKET_CONNECT),
+                    timeout=TIMEOUT_WEBSOCKET_CONNECT,  # type: ignore[arg-type]
                     receive_timeout=TIMEOUT_WEBSOCKET_RECEIVE,
                     autoclose=True,
                     proxy=proxy,
@@ -948,7 +948,7 @@ class TydomClient:
         )
         a_bytes = self._cmd_prefix + bytes(str_request, "ascii")
 
-        STRUCTURED_LOGGER.api_call(
+        STRUCTURED_LOGGER.api_request(
             "debug", "PUT", path, moment_id=str(moment_id), suspend_to=suspend_to
         )
         LOGGER.debug(

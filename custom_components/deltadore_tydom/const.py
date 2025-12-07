@@ -64,6 +64,10 @@ def validate_value_with_metadata(
             return True, None  # Pas de métadonnées, on accepte
         metadata = device._metadata
 
+    # Vérification de type pour le type checker
+    if metadata is None:
+        return True, None  # Pas de métadonnées, on accepte
+
     if attribute_name not in metadata:
         return True, None  # Pas de métadonnées pour cet attribut, on accepte
 

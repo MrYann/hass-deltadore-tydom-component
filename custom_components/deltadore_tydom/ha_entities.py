@@ -173,7 +173,7 @@ class HAEntity:
         """
         if self._device is not None:
             # Register callback for state updates
-            self._device.register_callback(self.async_write_ha_state)
+            self._device.register_callback(self.async_write_ha_state)  # type: ignore[attr-defined]
             # Register entity reference (only if entity is actually added)
             self._device._ha_device = self
 
@@ -185,7 +185,7 @@ class HAEntity:
         """
         if self._device is not None:
             # Remove callback
-            self._device.remove_callback(self.async_write_ha_state)
+            self._device.remove_callback(self.async_write_ha_state)  # type: ignore[attr-defined]
             # Clear entity reference if it points to this entity
             if hasattr(self._device, "_ha_device") and self._device._ha_device is self:
                 self._device._ha_device = None
@@ -857,8 +857,9 @@ class ClockSensor(SensorEntity):
     @property
     def native_value(self) -> datetime | str | int | None:
         """Return the clock value."""
-        if hasattr(self._device, "clock") and isinstance(self._device.clock, dict):
-            value = self._device.clock.get(self._attribute)
+        clock = getattr(self._device, "clock", None)
+        if clock is not None and isinstance(clock, dict):
+            value = clock.get(self._attribute)
             if value is not None:
                 if self._attribute == "clock":
                     # Return datetime object for TIMESTAMP device class
@@ -919,8 +920,8 @@ class ClockSensor(SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional state attributes."""
         attrs = {}
-        if hasattr(self._device, "clock") and isinstance(self._device.clock, dict):
-            clock = self._device.clock
+        clock = getattr(self._device, "clock", None)
+        if clock is not None and isinstance(clock, dict):
             if "source" in clock:
                 attrs["source"] = clock["source"]
             if "timezone" in clock:
@@ -1026,8 +1027,9 @@ class GeolocationSensor(SensorEntity):
     @property
     def native_value(self) -> float | None:
         """Return the geolocation value."""
-        if hasattr(self._device, "geoloc") and isinstance(self._device.geoloc, dict):
-            value = self._device.geoloc.get(self._attribute)
+        geoloc = getattr(self._device, "geoloc", None)
+        if geoloc is not None and isinstance(geoloc, dict):
+            value = geoloc.get(self._attribute)
             if value is not None:
                 # Tydom returns coordinates in a special format (e.g., -1895574 for longitude)
                 # These need to be divided by 100000 to get actual degrees
@@ -1041,8 +1043,8 @@ class GeolocationSensor(SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional state attributes."""
         attrs = {}
-        if hasattr(self._device, "geoloc") and isinstance(self._device.geoloc, dict):
-            geoloc = self._device.geoloc
+        geoloc = getattr(self._device, "geoloc", None)
+        if geoloc is not None and isinstance(geoloc, dict):
             if "longitude" in geoloc:
                 attrs["raw_longitude"] = geoloc["longitude"]
             if "latitude" in geoloc:
@@ -4032,7 +4034,7 @@ class HAScene(Scene, HAEntity):
 
             # Create DeviceInfo for virtual device grouping TWC scenes
             # IMPORTANT: All TWC scenes must use the same device_identifier to be grouped
-            info: DeviceInfo = {
+            device_info: DeviceInfo = {
                 "identifiers": {(DOMAIN, device_identifier)},
                 "name": device_name,
                 "manufacturer": "Delta Dore",
@@ -4041,7 +4043,7 @@ class HAScene(Scene, HAEntity):
 
             # Link to physical device or gateway
             if via_device_id:
-                info["via_device"] = (DOMAIN, via_device_id)
+                device_info["via_device"] = (DOMAIN, via_device_id)
 
             LOGGER.debug(
                 "TWC scene device_info: scene=%s, is_twc=%s, zone=%s, device_identifier=%s",
@@ -4051,7 +4053,7 @@ class HAScene(Scene, HAEntity):
                 device_identifier,
             )
 
-            return info
+            return device_info
         else:
             # Non-TWC scene - group in "Scènes Tydom" virtual device
             device_name = self._get_translated_device_name("tydom_scenes")
@@ -4446,7 +4448,7 @@ class HASwitch(SwitchEntity, HAEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional state attributes."""
         attrs: dict[str, Any] = {}
-        return self._enrich_extra_state_attributes(attrs)
+        return self._enrich_extra_state_attributes(attrs)  # type: ignore[attr-defined]
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the switch on."""
